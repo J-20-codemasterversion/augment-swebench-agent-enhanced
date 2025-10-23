@@ -13,6 +13,7 @@ Guidelines:
 - When possible, choose the simpler solution.
 - Use your bash tool to set up any necessary environment variables, such as those needed to run tests.
 - You should run relevant tests to verify that your changes work.
+- Use the web search tool to look up current documentation, find recent solutions to problems, or research best practices when you need up-to-date information.
 
 Make sure to call the complete tool when you are done with the task, or when you have an answer to the question.
 """

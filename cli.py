@@ -21,6 +21,7 @@ from prompts.instruction import INSTRUCTION_PROMPT
 from tools.agent import Agent
 from utils.llm_client import get_client
 from utils.workspace_manager import WorkspaceManager
+from utils.agent_orchestrator import AgentOrchestrator
 
 MAX_OUTPUT_TOKENS_PER_TURN = 32768
 MAX_TURNS = 200
@@ -70,6 +71,12 @@ def main():
     parser.add_argument(
         "--minimize-stdout-logs",
         help="Minimize the amount of logs printed to stdout.",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "--enable-bug-finder",
+        help="Enable parallel bug-finder agent.",
         action="store_true",
         default=False,
     )
@@ -125,17 +132,36 @@ def main():
         root=workspace_path, container_workspace=args.use_container_workspace
     )
 
-    # Initialize agent
-    agent = Agent(
-        client=client,
-        workspace_manager=workspace_manager,
-        console=console,
-        logger_for_agent_logs=logger_for_agent_logs,
-        max_output_tokens_per_turn=MAX_OUTPUT_TOKENS_PER_TURN,
-        max_turns=MAX_TURNS,
-        ask_user_permission=args.needs_permission,
-        docker_container_id=args.docker_container_id,
-    )
+    # Initialize agent or orchestrator
+    if args.enable_bug_finder:
+        # Use orchestrator with bug-finder
+        client_config = {
+            "client_name": "anthropic-direct",
+            "model_name": "claude-sonnet-4-20250514",
+            "use_caching": True
+        }
+        orchestrator = AgentOrchestrator(
+            workspace_path=workspace_path,
+            client_config=client_config,
+            console=console,
+            logger_for_agent_logs=logger_for_agent_logs,
+            max_output_tokens_per_turn=MAX_OUTPUT_TOKENS_PER_TURN,
+            max_turns=MAX_TURNS,
+            ask_user_permission=args.needs_permission
+        )
+        agent = orchestrator  # Use orchestrator as the agent interface
+    else:
+        # Use regular agent
+        agent = Agent(
+            client=client,
+            workspace_manager=workspace_manager,
+            console=console,
+            logger_for_agent_logs=logger_for_agent_logs,
+            max_output_tokens_per_turn=MAX_OUTPUT_TOKENS_PER_TURN,
+            max_turns=MAX_TURNS,
+            ask_user_permission=args.needs_permission,
+            docker_container_id=args.docker_container_id,
+        )
 
     if args.problem_statement is not None:
         instruction = INSTRUCTION_PROMPT.format(
@@ -172,8 +198,15 @@ def main():
             # Run the agent with the user input
             logger_for_agent_logs.info("\nAgent is thinking...")
             try:
-                result = agent.run_agent(user_input, resume=True)
-                logger_for_agent_logs.info(f"Agent: {result}")
+                if args.enable_bug_finder:
+                    # Use orchestrator (async)
+                    import asyncio
+                    result = asyncio.run(agent.run(user_input))
+                    logger_for_agent_logs.info(f"Agent: {result}")
+                else:
+                    # Use regular agent
+                    result = agent.run_agent(user_input, resume=True)
+                    logger_for_agent_logs.info(f"Agent: {result}")
             except Exception as e:
                 logger_for_agent_logs.info(f"Error: {str(e)}")
 

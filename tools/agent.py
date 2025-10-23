@@ -12,6 +12,7 @@ from tools.complete_tool import CompleteTool
 from prompts.system_prompt import SYSTEM_PROMPT
 from tools.str_replace_tool import StrReplaceEditorTool
 from tools.sequential_thinking_tool import SequentialThinkingTool
+from tools.web_search_tool import create_web_search_tool
 from termcolor import colored
 from rich.console import Console
 import logging
@@ -58,6 +59,7 @@ try breaking down the task into smaller steps and call this tool multiple times.
         use_prompt_budgeting: bool = True,
         ask_user_permission: bool = False,
         docker_container_id: Optional[str] = None,
+        shared_controller: Optional[Any] = None,
     ):
         """Initialize the agent.
 
@@ -75,6 +77,7 @@ try breaking down the task into smaller steps and call this tool multiple times.
         self.max_turns = max_turns
         self.workspace_manager = workspace_manager
         self.interrupted = False
+        self.shared_controller = shared_controller
         self.dialog = DialogMessages(
             logger_for_agent_logs=logger_for_agent_logs,
             use_prompt_budgeting=use_prompt_budgeting,
@@ -106,6 +109,7 @@ try breaking down the task into smaller steps and call this tool multiple times.
             bash_tool,
             StrReplaceEditorTool(workspace_manager=workspace_manager),
             SequentialThinkingTool(),
+            create_web_search_tool(use_gpt5=True),
             self.complete_tool,
         ]
 
@@ -128,6 +132,21 @@ try breaking down the task into smaller steps and call this tool multiple times.
         remaining_turns = self.max_turns
         while remaining_turns > 0:
             remaining_turns -= 1
+
+            # Checkpoint at the start of each turn
+            if self.shared_controller:
+                import asyncio
+                should_continue = asyncio.run(self.shared_controller.checkpoint())
+                if not should_continue:
+                    break
+                
+                # Get any insights from bug-finder
+                insights = asyncio.run(self.shared_controller.get_insights())
+                if insights:
+                    context_summary = self.shared_controller.get_context_summary()
+                    self.console.print(f"[yellow]💡 Bug-finder insights: {context_summary}[/yellow]")
+                    # Add insights to dialog
+                    self.dialog.add_user_prompt(f"Bug-finder insights: {context_summary}")
 
             delimiter = "-" * 45 + " NEW TURN " + "-" * 45
             self.logger_for_agent_logs.info(f"\n{delimiter}\n")
@@ -208,6 +227,13 @@ try breaking down the task into smaller steps and call this tool multiple times.
 
                     self.dialog.add_tool_call_result(tool_call, tool_result)
 
+                    # Checkpoint after tool execution
+                    if self.shared_controller:
+                        import asyncio
+                        should_continue = asyncio.run(self.shared_controller.checkpoint())
+                        if not should_continue:
+                            break
+
                     if self.complete_tool.should_stop:
                         # Add a fake model response, so the next turn is the user's
                         # turn in case they want to resume
@@ -286,8 +312,25 @@ try breaking down the task into smaller steps and call this tool multiple times.
         }
         if orientation_instruction:
             tool_input["orientation_instruction"] = orientation_instruction
-        return self.run(tool_input, self.dialog)
+        return self.run_impl(tool_input, self.dialog)
 
     def clear(self):
         self.dialog.clear()
         self.interrupted = False
+    
+    async def run(self, problem_statement: str):
+        """Run the agent with a problem statement, with checkpoint support."""
+        # Add checkpoint before starting
+        if self.shared_controller:
+            import asyncio
+            asyncio.run(self.shared_controller.checkpoint())
+        
+        # Run the agent
+        result = self.run_agent(problem_statement)
+        
+        # Add checkpoint after completion
+        if self.shared_controller:
+            import asyncio
+            asyncio.run(self.shared_controller.checkpoint())
+        
+        return result
