@@ -26,7 +26,13 @@ dependencies = [
     "termcolor>=2.5.0",
 ]
 [tool.setuptools]
-packages = ["swebench_system"]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["tools*", "utils*", "prompts*"]
+exclude = ["demo*", "tests*", "swebench_system.egg-info*"]
+
 
 [dependency-groups]
 dev = [
